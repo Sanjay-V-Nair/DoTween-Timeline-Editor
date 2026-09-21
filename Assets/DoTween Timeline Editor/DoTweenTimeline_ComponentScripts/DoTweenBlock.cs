@@ -8,8 +8,7 @@ using UnityEditor;
 namespace Hitwicket.DoTweenTimeline
 {
     [Serializable]
-    public abstract class DoTweenBlock
-    {
+    public abstract class DoTweenBlock {
         public bool isExpanded = false; // Used by custom editor to expand/collapse block details
         public string blockName = "Tween";
         public float startTime = 0f;
@@ -21,8 +20,7 @@ namespace Hitwicket.DoTweenTimeline
 
 #if UNITY_EDITOR
         // This allows drawing custom properties inline in the timeline block UI or inspector
-        public virtual void DrawInlineProperties()
-        {
+        public virtual void DrawInlineProperties() {
             blockName = EditorGUILayout.TextField("Name", blockName);
             target = (GameObject)EditorGUILayout.ObjectField("Target", target, typeof(GameObject), true);
             easeType = (Ease)EditorGUILayout.EnumPopup("Ease", easeType);

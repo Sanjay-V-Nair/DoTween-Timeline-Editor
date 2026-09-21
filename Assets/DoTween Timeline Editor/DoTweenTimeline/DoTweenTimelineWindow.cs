@@ -22,7 +22,7 @@ namespace Hitwicket.Editor.DoTweenTimeline
         private const float headerHeight = 30f;
         private const float leftPanelWidth = 250f;
         private const float baseTrackHeight = 40f;
-        private const float expandedPropertyHeight = 180f; // Increased space for properties to prevent overlap
+        private const float expandedPropertyHeight = 260f;
         
         private int draggingBlockIndex = -1;
         private int selectedBlockIndex = -1;

@@ -21,23 +21,24 @@ namespace Hitwicket.DoTweenTimeline.Custom
 
         public override Tween GenerateTween()
         {
-            if (target == null) return null;
-            
-            // --- CUSTOM CODE ---
-             	DOTween.Kill(text);
-            
-                        return DOTween.To(
-                                () => currentValue,
-                                x => {
-                                    currentValue = x;
-                                    text.text = prefix + currentValue + suffix;
-                                },
-                                targetValue,
-                                duration)
-                            .SetEase(Ease.OutQuad)
-                            .SetTarget(text)
-                            .SetLink(text.gameObject);
-            // -------------------
+            if (target == null || text == null) return null;
+
+            int start = currentValue;
+            DOTween.Kill(text);
+
+            return DOTween.To(
+                    () => start,
+                    x => {
+                        start = x;
+                        currentValue = x;
+                        text.text = prefix + x + suffix;
+                    },
+                    targetValue,
+                    duration)
+                .From(start, false)
+                .SetEase(Ease.OutQuad)
+                .SetTarget(text)
+                .SetLink(text.gameObject);
         }
 
 #if UNITY_EDITOR
