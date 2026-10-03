@@ -5,6 +5,5 @@ namespace DoTweenTimeline.Scripts.Core.Timeline {
         public void Pause();
         public void Resume();
         public void SkipTo();
-        public void Bookmark();
     }
 }
