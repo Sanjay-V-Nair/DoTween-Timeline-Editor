@@ -1,0 +1,18 @@
+{
+    "name": "DoTweenTimelineEditor",
+    "rootNamespace": "DoTweenTimeline",
+    "references": [
+        "GUID:9577827e865934464aa1b5c780513860"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

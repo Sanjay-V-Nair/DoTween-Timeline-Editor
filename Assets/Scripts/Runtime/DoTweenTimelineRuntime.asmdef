@@ -1,0 +1,16 @@
+{
+    "name": "DoTweenTimelineRuntime",
+    "rootNamespace": "DoTweenTimeline",
+    "references": [
+        "GUID:025f2af70af3c6943827a5515bbfa6e5"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
