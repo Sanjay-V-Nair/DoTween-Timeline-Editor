@@ -16,10 +16,10 @@ namespace DoTweenTimeline.Editor {
 
             EditorGUI.BeginChangeCheck();
             DrawDefaultInspector();
-            // Built sequence is stale once blocks change, so end the preview.
+            // Built sequence is stale once blocks change, so rebuild it.
             if (EditorGUI.EndChangeCheck() && previewing) {
-                TimelinePreview.Stop();
-                previewing = false;
+                TimelinePreview.Rebuild();
+                previewing = TimelinePreview.IsActive && TimelinePreview.Target == timeline;
             }
 
             EditorGUILayout.Space();

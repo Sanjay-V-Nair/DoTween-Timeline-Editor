@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using DG.Tweening;
 using DoTweenTimeline.Runtime.Block;
+using UnityEngine;
 
 namespace DoTweenTimeline.Runtime.SequenceBuilder {
     public class SequenceBuilder {
@@ -18,8 +19,12 @@ namespace DoTweenTimeline.Runtime.SequenceBuilder {
             if (blocks == null) return _currentSequence;
             foreach (var block in blocks) {
                 var tween = block?.GenerateTween();
-                if (tween != null && tween.Duration() > 0) {
-                    _currentSequence.Insert(block.startTime, tween);
+                if (tween == null) continue;
+                if (tween.Duration() > 0) {
+                    _currentSequence.Insert(Mathf.Max(0f, block.startTime), tween);
+                }
+                else {
+                    tween.Kill(); // not inserted would otherwise run on its own
                 }
             }
             return _currentSequence;

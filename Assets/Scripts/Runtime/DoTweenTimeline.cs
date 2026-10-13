@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using DG.Tweening;
 using DoTweenTimeline.Runtime.Block;
@@ -14,8 +13,6 @@ namespace DoTweenTimeline.Runtime {
         private SequenceRunner.SequenceRunner _sequenceRunner = new ();
         private Sequence _currentSeq;
 
-        private bool _isSequenceUpdated;
-        
         public IReadOnlyList<TweenBlock> Blocks => tweens;
         public bool IsPlaying => _sequenceRunner.IsSequenceRunning();
         public float PlaybackTime => _sequenceRunner.Elapsed;
@@ -41,9 +38,16 @@ namespace DoTweenTimeline.Runtime {
 
         [ContextMenu("Play Tween Sequence")]
         public void Play() {
-            if(_sequenceRunner.IsSequenceRunning()) return;
-            if(_currentSeq == null) UpdateSequence();
+            if (_sequenceRunner.IsSequenceRunning()) return;
+            if (!EnsureSequence()) return;
             _sequenceRunner.Play();
+        }
+
+        // Builds when there is none, or when the old one was killed (e.g. DOTween.KillAll).
+        // Returns false when there is nothing to play.
+        private bool EnsureSequence() {
+            if (_currentSeq == null || !_currentSeq.active) UpdateSequence();
+            return _currentSeq.Duration() > 0f;
         }
 
         private void UpdateSequence() {
@@ -55,21 +59,21 @@ namespace DoTweenTimeline.Runtime {
         }
         
         public void OnPauseToggle() {
-            _sequenceRunner?.OnPauseToggle();
+            _sequenceRunner.OnPauseToggle();
         }
 
         [ContextMenu("Pause")]
         public void Pause() {
-            _sequenceRunner?.Pause();
+            _sequenceRunner.Pause();
         }
 
         [ContextMenu("Resume")]
         public void Resume() {
-            _sequenceRunner?.Play();
+            Play();
         }
 
         public void SkipTo(float t, bool isPlay = true) {
-            if (_currentSeq == null) UpdateSequence();
+            if (!EnsureSequence()) return;
             _sequenceRunner.SkipTo(t, isPlay);
         }
 

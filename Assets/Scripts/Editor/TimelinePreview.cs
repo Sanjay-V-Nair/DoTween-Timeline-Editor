@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using DG.DOTweenEditor;
 using DG.Tweening;
 using UnityEditor;
+using UnityEditor.SceneManagement;
+using UnityEditorInternal;
 using UnityEngine;
 using Timeline = DoTweenTimeline.Runtime.DoTweenTimeline;
 
@@ -31,6 +33,9 @@ namespace DoTweenTimeline.Editor {
             EditorApplication.playModeStateChanged += state => {
                 if (state == PlayModeStateChange.ExitingEditMode) Stop();
             };
+            // Never save or close a scene while previewed objects are displaced.
+            EditorSceneManager.sceneSaving += (scene, path) => Stop();
+            EditorSceneManager.sceneClosing += (scene, removing) => Stop();
         }
 
         public static bool Begin(Timeline target) {
@@ -81,7 +86,7 @@ namespace DoTweenTimeline.Editor {
             if (!IsActive) return;
             Time = Mathf.Clamp(time, 0f, Duration);
             _sequence.Goto(Time, false);
-            SceneView.RepaintAll();
+            InternalEditorUtility.RepaintAllViews();
             Changed?.Invoke();
         }
 
@@ -113,7 +118,7 @@ namespace DoTweenTimeline.Editor {
 
             _target = null;
             Time = 0f;
-            SceneView.RepaintAll();
+            InternalEditorUtility.RepaintAllViews();
             Changed?.Invoke();
         }
 

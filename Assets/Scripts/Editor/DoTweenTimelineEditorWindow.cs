@@ -531,6 +531,11 @@ namespace DoTweenTimeline.Editor {
         }
 
         private void OnTick() {
+            // Target deleted (scene change, object destroyed): fall back to the empty state.
+            if (_target == null && _tweens != null) {
+                BindTarget();
+                return;
+            }
             if (_target == null || _tweens == null) return;
             UpdateTransport();
             UpdatePlayhead();
@@ -707,7 +712,9 @@ namespace DoTweenTimeline.Editor {
         }
 
         private void OnKeyDown(KeyDownEvent e) {
-            if (_target == null || e.target is TextElement) return; // let text fields keep their keys
+            // Only act when the timeline itself has focus (it takes focus on click). A focused button, toggle
+            // or text field keeps its own Space/Delete/Backspace behaviour.
+            if (_target == null || e.target != rootVisualElement) return;
 
             switch (e.keyCode) {
                 case KeyCode.Space:

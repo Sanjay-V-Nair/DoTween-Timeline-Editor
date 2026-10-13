@@ -79,6 +79,8 @@ namespace DoTweenTimeline.Editor {
                 newBlock.name = oldBlock.name;
                 newBlock.startTime = oldBlock.startTime;
                 newBlock.duration = oldBlock.duration;
+                newBlock.track = oldBlock.track;
+                newBlock.curve = oldBlock.curve;
                 newBlock.easeType = oldBlock.easeType;
                 newBlock.gameObject = oldBlock.gameObject;
             }

@@ -10,44 +10,52 @@ namespace DoTweenTimeline.Runtime.SequenceRunner {
 #if UNITY_EDITOR
         public static Action<string, string> OnShowWarningToast;
 #endif
-        
+
+        private bool HasSequence => _currentSequence != null && _currentSequence.active;
+
+        public float Elapsed => HasSequence ? _currentSequence.Elapsed() : 0f;
+
         public void Setup(Sequence sequence) {
             Reset();
             _currentSequence = sequence;
         }
 
         public void Play() {
-            if (_currentSequence == null) {
+            if (!HasSequence) {
 #if UNITY_EDITOR
                 OnShowWarningToast?.Invoke("Sequence Error", "No active sequence found!");
 #endif
-                Debug.LogError($"Sequence Error: Sequence is Null!");
+                Debug.LogError("Sequence Error: Sequence is Null!");
+                return;
             }
-            _currentSequence.Play();
+
+            // A finished sequence ignores Play(), so start it over.
+            if (_currentSequence.IsComplete()) _currentSequence.Restart();
+            else _currentSequence.Play();
         }
 
-        public float Elapsed => _currentSequence != null && _currentSequence.active ? _currentSequence.Elapsed() : 0f;
-
         public bool IsSequenceRunning() {
-            return _currentSequence?.IsPlaying() ?? false;
+            return HasSequence && _currentSequence.IsPlaying();
         }
 
         public void Pause() {
-            if (!_currentSequence.IsPlaying()) return;
-            _currentSequence?.Pause();
+            if (!IsSequenceRunning()) return;
+            _currentSequence.Pause();
         }
         
         public void OnPauseToggle() {
-            _currentSequence?.TogglePause();
+            if (HasSequence) _currentSequence.TogglePause();
         }
 
         public void Resume() {
-            if (_currentSequence.IsPlaying()) return;
-            _currentSequence?.Play();
+            if (!HasSequence || _currentSequence.IsPlaying()) return;
+            _currentSequence.Play();
         }
 
         public void SkipTo(float t, bool isPlay = true) {
-            _currentSequence?.Goto(t, isPlay);
+            // Goto() on a sequence without tweens throws IndexOutOfRangeException.
+            if (!HasSequence || _currentSequence.Duration() <= 0f) return;
+            _currentSequence.Goto(t, isPlay);
         }
         
         public void Reset() {
