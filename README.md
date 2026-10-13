@@ -314,9 +314,6 @@ Assets/
         ├── SubclassSelectorDrawer.cs
         └── Styles/TimelineWindow.uss
 ```
-
-See [`DOTWEEN_TIMELINE_DESIGN_DOC.md`](DOTWEEN_TIMELINE_DESIGN_DOC.md) for the full design notes.
-
 ---
 
 ## Roadmap
