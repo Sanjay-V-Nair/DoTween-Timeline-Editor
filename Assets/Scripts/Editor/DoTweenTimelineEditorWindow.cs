@@ -4,24 +4,28 @@ using DoTweenTimeline.Runtime.Block;
 using DoTweenTimeline.Runtime.SequenceRunner;
 using DoTweenTimeline.Runtime.Timeline;
 using UnityEditor;
+using UnityEditor.UIElements;
 using UnityEngine;
+using UnityEngine.UIElements;
 using Timeline = DoTweenTimeline.Runtime.DoTweenTimeline;
 
 namespace DoTweenTimeline.Editor {
     /// <summary>
-    /// Track-based timeline editor. Pure view/controller: the component owns the data, the builder and the runner.
+    /// Track-based timeline editor built with UI Toolkit and styled by Styles/TimelineWindow.uss.
+    /// Pure view/controller: the component owns the data, the builder and the runner.
     /// All edits go through a SerializedObject on the component (Undo, dirty flag and prefab overrides come for free).
     /// Edit mode plays through TimelinePreview, Play mode forwards to the component.
     /// </summary>
     public class DoTweenTimelineEditorWindow : EditorWindow, ITimeline {
 
-        private const float ToolbarH = 22f;
-        private const float RulerH = 22f;
-        private const float HeaderW = 110f;
-        private const float TrackH = 34f;
-        private const float DetailsH = 190f;
-        private const float EdgeW = 6f;
+        // Geometry that the code relies on lives here; colours and typography live in the .uss file.
+        private const float HeaderW = 112f;
+        private const float RulerH = 28f;
+        private const float TrackH = 40f;
         private const float MinDuration = 0.05f;
+        private const float MinZoom = 20f;
+        private const float MaxZoom = 600f;
+        private const string StyleSheetName = "TimelineWindow.uss";
 
         private enum Drag { None, Scrub, Move, ResizeLeft, ResizeRight }
 
@@ -31,8 +35,28 @@ namespace DoTweenTimeline.Editor {
             public float Duration;
             public int Track;
             public string Label;
-            public Color Color;
+            public string Category;
             public float End => Start + Duration;
+        }
+
+        private class BlockView : VisualElement {
+            public int Index;
+            public string Category;
+            public readonly Label Title = new() { pickingMode = PickingMode.Ignore };
+
+            public BlockView() {
+                AddToClassList("tl-block");
+                Title.AddToClassList("tl-block__label");
+                var left = new VisualElement();
+                left.AddToClassList("tl-handle");
+                left.AddToClassList("tl-handle--left");
+                var right = new VisualElement();
+                right.AddToClassList("tl-handle");
+                right.AddToClassList("tl-handle--right");
+                Add(Title);
+                Add(left);
+                Add(right);
+            }
         }
 
         [SerializeField] private Timeline _target;
@@ -42,24 +66,40 @@ namespace DoTweenTimeline.Editor {
         [SerializeField] private float _cursor;
         [SerializeField] private bool _snapEnabled = true;
         [SerializeField] private float _snapStep = 0.05f;
-        [SerializeField] private Vector2 _detailsScroll;
 
+        // Data
         private SerializedObject _so;
         private SerializedProperty _tweens;
+        private VisualElement _trackerHost;
         private readonly List<BlockInfo> _infos = new();
+        private readonly List<float> _tickTimes = new();
         private int _trackCount = 3;
+        private int _lastBlockCount = -1;
 
+        // Drag state
         private Drag _drag;
         private int _dragIndex;
-        private float _dragMouseX;
+        private float _dragPointerX;
         private float _dragStart;
         private float _dragDuration;
 
-        private Rect _rulerRect;
-        private Rect _tracksRect;
-        private Rect _detailsRect;
-        private GUIStyle _blockLabelStyle;
-        private GUIStyle _labelStyle;
+        // Views
+        private VisualElement _toolbar;
+        private VisualElement _main;
+        private VisualElement _ruler;
+        private VisualElement _headers;
+        private VisualElement _lanes;
+        private VisualElement _rowLayer;
+        private VisualElement _gridLayer;
+        private VisualElement _blockLayer;
+        private VisualElement _playhead;
+        private VisualElement _details;
+        private VisualElement _detailsBody;
+        private Label _detailsTitle;
+        private Label _emptyState;
+        private Label _timeLabel;
+        private Button _playButton;
+        private Slider _zoom;
 
         #region Open / lifecycle
 
@@ -85,14 +125,12 @@ namespace DoTweenTimeline.Editor {
         }
 
         private void OnEnable() {
-            minSize = new Vector2(480f, 260f);
-            TimelinePreview.Changed += Repaint;
-            Undo.undoRedoPerformed += OnUndoRedo;
+            minSize = new Vector2(520f, 300f);
+            TimelinePreview.Changed += OnPreviewChanged;
         }
 
         private void OnDisable() {
-            TimelinePreview.Changed -= Repaint;
-            Undo.undoRedoPerformed -= OnUndoRedo;
+            TimelinePreview.Changed -= OnPreviewChanged;
         }
 
         private void OnDestroy() {
@@ -100,23 +138,654 @@ namespace DoTweenTimeline.Editor {
             if (PreviewActive) TimelinePreview.Stop();
         }
 
-        private void Update() {
-            if (Application.isPlaying && _target != null) Repaint();
-        }
-
         private void SetTarget(Timeline target) {
             if (PreviewActive) TimelinePreview.Stop();
             _target = target;
-            _so = null;
-            _tweens = null;
             _selected = -1;
             _cursor = 0f;
-            Repaint();
+            if (_main != null) BindTarget();
         }
 
-        private void OnUndoRedo() {
-            _so?.Update();
-            if (_selected >= (_tweens?.arraySize ?? 0)) _selected = -1;
+        private void OnPreviewChanged() {
+            if (_main == null) return;
+            UpdateTransport();
+            UpdatePlayhead();
+        }
+
+        #endregion
+
+        #region Build UI
+
+        public void CreateGUI() {
+            var root = rootVisualElement;
+            root.Clear();
+            root.AddToClassList("tl-root");
+            root.focusable = true;
+
+            var sheet = LoadStyleSheet();
+            if (sheet != null) root.styleSheets.Add(sheet);
+            else Debug.LogWarning($"DoTween Timeline: {StyleSheetName} not found next to the window script.");
+
+            BuildToolbar(root);
+            BuildMain(root);
+            BuildDetails(root);
+
+            _emptyState = new Label("Select a GameObject with a DoTweenTimeline, then open this window from its inspector or Window > DoTween Timeline.");
+            _emptyState.AddToClassList("tl-empty");
+            root.Add(_emptyState);
+
+            root.RegisterCallback<KeyDownEvent>(OnKeyDown);
+            root.schedule.Execute(OnTick).Every(33);
+
+            BindTarget();
+        }
+
+        private StyleSheet LoadStyleSheet() {
+            var script = MonoScript.FromScriptableObject(this);
+            var scriptPath = script != null ? AssetDatabase.GetAssetPath(script) : null;
+            if (string.IsNullOrEmpty(scriptPath)) return null;
+            var directory = System.IO.Path.GetDirectoryName(scriptPath)?.Replace('\\', '/');
+            return AssetDatabase.LoadAssetAtPath<StyleSheet>($"{directory}/Styles/{StyleSheetName}");
+        }
+
+        private void BuildToolbar(VisualElement root) {
+            _toolbar = new VisualElement();
+            _toolbar.AddToClassList("tl-toolbar");
+
+            _playButton = new Button(TogglePlay) { text = "Play" };
+            _playButton.AddToClassList("tl-btn");
+            _playButton.AddToClassList("tl-btn--primary");
+
+            var stop = new Button(Stop) { text = "Stop" };
+            stop.AddToClassList("tl-btn");
+
+            var add = new Button { text = "+ Add Block" };
+            add.AddToClassList("tl-btn");
+            add.clicked += () => ShowAddMenu(add);
+
+            var snap = new Toggle("Snap") { value = _snapEnabled };
+            snap.AddToClassList("tl-toggle");
+            snap.RegisterValueChangedCallback(e => _snapEnabled = e.newValue);
+
+            var spacer = new VisualElement();
+            spacer.AddToClassList("tl-spacer");
+
+            _timeLabel = new Label("0s / 0s");
+            _timeLabel.AddToClassList("tl-time");
+
+            _zoom = new Slider(MinZoom, MaxZoom) { value = _pixelsPerSecond };
+            _zoom.AddToClassList("tl-zoom");
+            _zoom.RegisterValueChangedCallback(e => SetZoom(e.newValue, _lanes.layout.width * 0.5f));
+
+            _toolbar.Add(_playButton);
+            _toolbar.Add(stop);
+            _toolbar.Add(add);
+            _toolbar.Add(snap);
+            _toolbar.Add(spacer);
+            _toolbar.Add(_timeLabel);
+            _toolbar.Add(_zoom);
+            root.Add(_toolbar);
+        }
+
+        private void BuildMain(VisualElement root) {
+            _main = new VisualElement();
+            _main.AddToClassList("tl-main");
+
+            var rulerRow = new VisualElement();
+            rulerRow.AddToClassList("tl-ruler-row");
+            rulerRow.style.height = RulerH;
+
+            var corner = new VisualElement();
+            corner.AddToClassList("tl-corner");
+            corner.style.width = HeaderW;
+
+            _ruler = new VisualElement();
+            _ruler.AddToClassList("tl-ruler");
+            _ruler.RegisterCallback<PointerDownEvent>(OnRulerDown);
+            _ruler.RegisterCallback<PointerMoveEvent>(OnRulerMove);
+            _ruler.RegisterCallback<PointerUpEvent>(OnRulerUp);
+
+            rulerRow.Add(corner);
+            rulerRow.Add(_ruler);
+
+            var scroll = new ScrollView(ScrollViewMode.Vertical);
+            scroll.AddToClassList("tl-scroll");
+
+            var trackArea = new VisualElement();
+            trackArea.AddToClassList("tl-track-area");
+
+            _headers = new VisualElement();
+            _headers.AddToClassList("tl-headers");
+            _headers.style.width = HeaderW;
+
+            _lanes = new VisualElement();
+            _lanes.AddToClassList("tl-lanes");
+            _lanes.RegisterCallback<GeometryChangedEvent>(_ => {
+                UpdateRuler();
+                UpdatePlayhead();
+            });
+            _lanes.RegisterCallback<PointerDownEvent>(OnLanesDown);
+
+            _rowLayer = new VisualElement();
+            _rowLayer.AddToClassList("tl-layer");
+            _gridLayer = new VisualElement { pickingMode = PickingMode.Ignore };
+            _gridLayer.AddToClassList("tl-layer");
+            _blockLayer = new VisualElement { pickingMode = PickingMode.Ignore };
+            _blockLayer.AddToClassList("tl-layer");
+
+            _lanes.Add(_rowLayer);
+            _lanes.Add(_gridLayer);
+            _lanes.Add(_blockLayer);
+
+            trackArea.Add(_headers);
+            trackArea.Add(_lanes);
+            scroll.Add(trackArea);
+
+            _playhead = new VisualElement { pickingMode = PickingMode.Ignore };
+            _playhead.AddToClassList("tl-playhead");
+            var head = new VisualElement { pickingMode = PickingMode.Ignore };
+            head.AddToClassList("tl-playhead__head");
+            _playhead.Add(head);
+
+            _main.Add(rulerRow);
+            _main.Add(scroll);
+            _main.Add(_playhead);
+            _main.RegisterCallback<WheelEvent>(OnWheel, TrickleDown.TrickleDown);
+            root.Add(_main);
+        }
+
+        private void BuildDetails(VisualElement root) {
+            _details = new VisualElement();
+            _details.AddToClassList("tl-details");
+
+            var header = new VisualElement();
+            header.AddToClassList("tl-details__header");
+            _detailsTitle = new Label("Block");
+            _detailsTitle.AddToClassList("tl-details__title");
+            var hint = new Label("Delete removes the block");
+            hint.AddToClassList("tl-details__hint");
+            header.Add(_detailsTitle);
+            header.Add(hint);
+
+            var body = new ScrollView(ScrollViewMode.Vertical);
+            _detailsBody = new VisualElement();
+            _detailsBody.AddToClassList("tl-details__body");
+            body.Add(_detailsBody);
+
+            _details.Add(header);
+            _details.Add(body);
+            root.Add(_details);
+        }
+
+        #endregion
+
+        #region Binding
+
+        private void BindTarget() {
+            // TrackSerializedObjectValue returns void in this Unity version, so a throwaway host element owns the tracker.
+            // Removing it from the hierarchy stops the old tracking.
+            _trackerHost?.RemoveFromHierarchy();
+            _trackerHost = null;
+            _so = null;
+            _tweens = null;
+
+            if (_target != null) {
+                _so = new SerializedObject(_target);
+                _tweens = _so.FindProperty("tweens");
+            }
+
+            var hasTarget = _tweens != null;
+            _emptyState.style.display = hasTarget ? DisplayStyle.None : DisplayStyle.Flex;
+            _toolbar.style.display = hasTarget ? DisplayStyle.Flex : DisplayStyle.None;
+            _main.style.display = hasTarget ? DisplayStyle.Flex : DisplayStyle.None;
+            _details.style.display = DisplayStyle.None;
+            if (!hasTarget) return;
+
+            if (_selected >= _tweens.arraySize) _selected = -1;
+            _trackerHost = new VisualElement { pickingMode = PickingMode.Ignore };
+            _trackerHost.style.position = Position.Absolute;
+            _trackerHost.style.width = 0f;
+            _trackerHost.style.height = 0f;
+            rootVisualElement.Add(_trackerHost);
+            _trackerHost.TrackSerializedObjectValue(_so, OnSerializedChanged);
+            RefreshInfos();
+            SyncView();
+            RebuildDetails();
+            UpdateTransport();
+        }
+
+        // Fires for any change to the component's data: dragging, the details panel, Undo/Redo, the inspector.
+        private void OnSerializedChanged(SerializedObject so) {
+            if (_tweens == null) return;
+            _so.Update();
+            if (_selected >= _tweens.arraySize) _selected = -1;
+
+            RefreshInfos();
+            SyncView();
+            if (_lastBlockCount != _tweens.arraySize) RebuildDetails();
+            if (_drag == Drag.None) CommitEdit();
+        }
+
+        // Called after any serialized change. The component invalidates its own sequence in OnValidate.
+        private void CommitEdit() {
+            if (PreviewActive) TimelinePreview.Rebuild();
+            UpdateTransport();
+            UpdatePlayhead();
+        }
+
+        private void RefreshInfos() {
+            _infos.Clear();
+            var maxTrack = 0;
+            for (var i = 0; i < _tweens.arraySize; i++) {
+                var element = _tweens.GetArrayElementAtIndex(i);
+                if (element.propertyType != SerializedPropertyType.ManagedReference) continue;
+                var typeName = element.managedReferenceFullTypename;
+                if (string.IsNullOrEmpty(typeName)) continue;
+
+                var nameProp = element.FindPropertyRelative("name");
+                var info = new BlockInfo {
+                    Index = i,
+                    Start = element.FindPropertyRelative("startTime")?.floatValue ?? 0f,
+                    Duration = element.FindPropertyRelative("duration")?.floatValue ?? 0f,
+                    Track = Mathf.Max(0, element.FindPropertyRelative("track")?.intValue ?? 0),
+                    Label = !string.IsNullOrEmpty(nameProp?.stringValue) ? nameProp.stringValue : NicifyTypeName(typeName),
+                    Category = CategoryOf(typeName),
+                };
+                maxTrack = Mathf.Max(maxTrack, info.Track);
+                _infos.Add(info);
+            }
+            _trackCount = Mathf.Max(3, maxTrack + 2); // always one empty track to drop blocks on
+        }
+
+        private bool TryGetInfo(int arrayIndex, out BlockInfo info) {
+            foreach (var candidate in _infos) {
+                if (candidate.Index != arrayIndex) continue;
+                info = candidate;
+                return true;
+            }
+            info = default;
+            return false;
+        }
+
+        #endregion
+
+        #region View sync
+
+        private float TimeToX(float time) => time * _pixelsPerSecond - _scroll;
+        private float XToTime(float x) => (x + _scroll) / _pixelsPerSecond;
+        private Vector2 LanesLocal(Vector3 panelPosition) => _lanes.WorldToLocal(panelPosition);
+
+        private static void EnsureChildren<T>(VisualElement parent, int count, Func<T> create) where T : VisualElement {
+            while (parent.childCount < count) parent.Add(create());
+            while (parent.childCount > count) parent.RemoveAt(parent.childCount - 1);
+        }
+
+        private void SyncView() {
+            if (_lanes == null || _tweens == null) return;
+
+            _lanes.style.height = _trackCount * TrackH;
+
+            EnsureChildren(_headers, _trackCount, () => {
+                var label = new Label();
+                label.AddToClassList("tl-header");
+                label.style.height = TrackH;
+                return label;
+            });
+            EnsureChildren(_rowLayer, _trackCount, () => {
+                var row = new VisualElement();
+                row.AddToClassList("tl-lane");
+                row.style.height = TrackH;
+                return row;
+            });
+            for (var t = 0; t < _trackCount; t++) {
+                ((Label)_headers[t]).text = $"Track {t + 1}";
+                _rowLayer[t].EnableInClassList("tl-lane--alt", t % 2 == 1);
+            }
+
+            EnsureChildren(_blockLayer, _infos.Count, CreateBlockView);
+            for (var i = 0; i < _infos.Count; i++) {
+                var info = _infos[i];
+                var view = (BlockView)_blockLayer[i];
+                view.Index = info.Index;
+                view.Title.text = info.Label;
+                if (view.Category != info.Category) {
+                    if (view.Category != null) view.RemoveFromClassList(CategoryClass(view.Category));
+                    view.AddToClassList(CategoryClass(info.Category));
+                    view.Category = info.Category;
+                }
+                view.EnableInClassList("tl-block--selected", info.Index == _selected);
+                view.style.left = TimeToX(info.Start);
+                view.style.width = Mathf.Max(6f, info.Duration * _pixelsPerSecond);
+                view.style.top = info.Track * TrackH + 4f;
+                view.style.height = TrackH - 8f;
+            }
+
+            UpdateRuler();
+            UpdatePlayhead();
+            UpdateTransport();
+        }
+
+        private BlockView CreateBlockView() {
+            var view = new BlockView();
+            view.RegisterCallback<PointerDownEvent>(e => OnBlockDown(view, e));
+            view.RegisterCallback<PointerMoveEvent>(e => OnBlockMove(view, e));
+            view.RegisterCallback<PointerUpEvent>(e => OnBlockUp(view, e));
+            view.RegisterCallback<PointerCaptureOutEvent>(_ => EndDrag());
+            return view;
+        }
+
+        private void UpdateRuler() {
+            if (_ruler == null || _lanes == null) return;
+            var width = _lanes.layout.width;
+            if (float.IsNaN(width) || width <= 0f) return;
+
+            var step = PickStep();
+            _tickTimes.Clear();
+            for (var time = Mathf.Max(0f, Mathf.Floor(XToTime(0f) / step) * step); ; time += step) {
+                if (TimeToX(time) > width) break;
+                if (TimeToX(time) >= -1f) _tickTimes.Add(time);
+            }
+
+            EnsureChildren(_ruler, _tickTimes.Count, () => {
+                var tick = new VisualElement { pickingMode = PickingMode.Ignore };
+                tick.AddToClassList("tl-tick");
+                var label = new Label { pickingMode = PickingMode.Ignore };
+                label.AddToClassList("tl-tick__label");
+                tick.Add(label);
+                return tick;
+            });
+            EnsureChildren(_gridLayer, _tickTimes.Count, () => {
+                var line = new VisualElement { pickingMode = PickingMode.Ignore };
+                line.AddToClassList("tl-grid-line");
+                return line;
+            });
+
+            for (var i = 0; i < _tickTimes.Count; i++) {
+                var x = TimeToX(_tickTimes[i]);
+                _ruler[i].style.left = x;
+                ((Label)_ruler[i][0]).text = FormatTime(_tickTimes[i]);
+                _gridLayer[i].style.left = x;
+            }
+        }
+
+        private void UpdatePlayhead() {
+            if (_playhead == null || _lanes == null) return;
+            var width = _lanes.layout.width;
+            if (float.IsNaN(width)) return;
+
+            var x = TimeToX(CursorTime);
+            var visible = x >= 0f && x <= width;
+            _playhead.style.display = visible ? DisplayStyle.Flex : DisplayStyle.None;
+            _playhead.style.left = HeaderW + x - 1f;
+        }
+
+        private void UpdateTransport() {
+            if (_playButton == null || _target == null) return;
+            var playing = IsPlayingNow;
+            _playButton.text = playing ? "Pause" : "Play";
+            _playButton.EnableInClassList("tl-btn--active", playing);
+
+            var total = 0f;
+            foreach (var info in _infos) total = Mathf.Max(total, info.End);
+            _timeLabel.text = $"{_target.name}   {FormatTime(CursorTime)} / {FormatTime(total)}";
+        }
+
+        private void OnTick() {
+            if (_target == null || _tweens == null) return;
+            UpdateTransport();
+            UpdatePlayhead();
+        }
+
+        private void SetZoom(float pixelsPerSecond, float anchorX) {
+            var timeUnderAnchor = XToTime(anchorX);
+            _pixelsPerSecond = Mathf.Clamp(pixelsPerSecond, MinZoom, MaxZoom);
+            _scroll = Mathf.Max(0f, timeUnderAnchor * _pixelsPerSecond - anchorX);
+            _zoom.SetValueWithoutNotify(_pixelsPerSecond);
+            SyncView();
+        }
+
+        private float PickStep() {
+            float[] steps = { 0.01f, 0.05f, 0.1f, 0.25f, 0.5f, 1f, 2f, 5f, 10f, 30f, 60f };
+            foreach (var s in steps) {
+                if (s * _pixelsPerSecond >= 70f) return s;
+            }
+            return steps[steps.Length - 1];
+        }
+
+        #endregion
+
+        #region Details panel
+
+        private void SelectBlock(int arrayIndex) {
+            _selected = arrayIndex;
+            SyncView();
+            RebuildDetails();
+        }
+
+        private void RebuildDetails() {
+            _lastBlockCount = _tweens?.arraySize ?? -1;
+            _detailsBody.Unbind();
+            _detailsBody.Clear();
+
+            if (_tweens == null || _selected < 0 || _selected >= _tweens.arraySize) {
+                _details.style.display = DisplayStyle.None;
+                return;
+            }
+
+            var element = _tweens.GetArrayElementAtIndex(_selected);
+            if (string.IsNullOrEmpty(element.managedReferenceFullTypename)) {
+                _details.style.display = DisplayStyle.None;
+                return;
+            }
+
+            _details.style.display = DisplayStyle.Flex;
+            _detailsTitle.text = NicifyTypeName(element.managedReferenceFullTypename);
+
+            var iterator = element.Copy();
+            var end = element.GetEndProperty();
+            var enterChildren = true;
+            while (iterator.NextVisible(enterChildren) && !SerializedProperty.EqualContents(iterator, end)) {
+                _detailsBody.Add(new PropertyField(iterator.Copy()));
+                enterChildren = false;
+            }
+            _detailsBody.Bind(_so);
+        }
+
+        #endregion
+
+        #region Input
+
+        private void OnRulerDown(PointerDownEvent e) {
+            if (e.button != 0 || _target == null) return;
+            _drag = Drag.Scrub;
+            _ruler.CapturePointer(e.pointerId);
+            SkipTo(RulerTime(e.position), false);
+            rootVisualElement.Focus();
+            e.StopPropagation();
+        }
+
+        private void OnRulerMove(PointerMoveEvent e) {
+            if (_drag != Drag.Scrub || !_ruler.HasPointerCapture(e.pointerId)) return;
+            SkipTo(RulerTime(e.position), false);
+            e.StopPropagation();
+        }
+
+        private void OnRulerUp(PointerUpEvent e) {
+            if (!_ruler.HasPointerCapture(e.pointerId)) return;
+            _ruler.ReleasePointer(e.pointerId);
+            _drag = Drag.None;
+            e.StopPropagation();
+        }
+
+        private float RulerTime(Vector3 panelPosition) => XToTime(_ruler.WorldToLocal(panelPosition).x);
+
+        private void OnLanesDown(PointerDownEvent e) {
+            if (e.button != 0) return;
+            rootVisualElement.Focus();
+            if (_selected != -1) SelectBlock(-1);
+        }
+
+        private void OnBlockDown(BlockView view, PointerDownEvent e) {
+            if (e.button != 0 || !TryGetInfo(view.Index, out var info)) return;
+
+            var target = e.target as VisualElement;
+            _drag = target != null && target.ClassListContains("tl-handle--left") ? Drag.ResizeLeft
+                  : target != null && target.ClassListContains("tl-handle--right") ? Drag.ResizeRight
+                  : Drag.Move;
+            _dragIndex = view.Index;
+            _dragPointerX = LanesLocal(e.position).x;
+            _dragStart = info.Start;
+            _dragDuration = info.Duration;
+
+            Undo.IncrementCurrentGroup();
+            Undo.SetCurrentGroupName("Edit Timeline Block");
+            SelectBlock(view.Index);
+            view.CapturePointer(e.pointerId);
+            rootVisualElement.Focus();
+            e.StopPropagation();
+        }
+
+        private void OnBlockMove(BlockView view, PointerMoveEvent e) {
+            if (_drag == Drag.None || _drag == Drag.Scrub || !view.HasPointerCapture(e.pointerId)) return;
+            ApplyDrag(LanesLocal(e.position));
+            e.StopPropagation();
+        }
+
+        private void OnBlockUp(BlockView view, PointerUpEvent e) {
+            if (!view.HasPointerCapture(e.pointerId)) return;
+            view.ReleasePointer(e.pointerId);
+            EndDrag();
+            e.StopPropagation();
+        }
+
+        private void EndDrag() {
+            var wasEdit = _drag != Drag.None && _drag != Drag.Scrub;
+            _drag = Drag.None;
+            if (wasEdit) CommitEdit();
+        }
+
+        private void ApplyDrag(Vector2 lanesPosition) {
+            if (_dragIndex < 0 || _dragIndex >= _tweens.arraySize) return;
+
+            var element = _tweens.GetArrayElementAtIndex(_dragIndex);
+            var delta = (lanesPosition.x - _dragPointerX) / _pixelsPerSecond;
+            var end = _dragStart + _dragDuration;
+
+            switch (_drag) {
+                case Drag.Move:
+                    SetFloat(element, "startTime", Mathf.Max(0f, Snap(_dragStart + delta)));
+                    SetInt(element, "track", Mathf.Clamp(Mathf.FloorToInt(lanesPosition.y / TrackH), 0, _trackCount - 1));
+                    break;
+                case Drag.ResizeRight:
+                    SetFloat(element, "duration", Mathf.Max(MinDuration, Snap(_dragDuration + delta)));
+                    break;
+                case Drag.ResizeLeft:
+                    var newStart = Mathf.Clamp(Snap(_dragStart + delta), 0f, end - MinDuration);
+                    SetFloat(element, "startTime", newStart);
+                    SetFloat(element, "duration", end - newStart);
+                    break;
+            }
+
+            _so.ApplyModifiedProperties();
+            RefreshInfos();
+            SyncView();
+        }
+
+        private void OnWheel(WheelEvent e) {
+            if (_lanes == null) return;
+            if (e.ctrlKey || e.commandKey) {
+                var anchor = _lanes.WorldToLocal(e.originalMousePosition).x;
+                SetZoom(_pixelsPerSecond * (1f - e.delta.y * 0.05f), anchor);
+                e.StopPropagation();
+            }
+            else if (e.shiftKey || Mathf.Abs(e.delta.x) > Mathf.Abs(e.delta.y)) {
+                var amount = e.shiftKey ? e.delta.y : e.delta.x;
+                _scroll = Mathf.Max(0f, _scroll + amount * 20f);
+                SyncView();
+                e.StopPropagation();
+            }
+        }
+
+        private void OnKeyDown(KeyDownEvent e) {
+            if (_target == null || e.target is TextElement) return; // let text fields keep their keys
+
+            switch (e.keyCode) {
+                case KeyCode.Space:
+                    TogglePlay();
+                    e.StopPropagation();
+                    break;
+                case KeyCode.Delete:
+                case KeyCode.Backspace:
+                    if (_selected < 0) return;
+                    DeleteSelected();
+                    e.StopPropagation();
+                    break;
+            }
+        }
+
+        private float Snap(float time) => _snapEnabled && _snapStep > 0f ? Mathf.Round(time / _snapStep) * _snapStep : time;
+
+        private static void SetFloat(SerializedProperty element, string field, float value) {
+            var p = element.FindPropertyRelative(field);
+            if (p != null) p.floatValue = value;
+        }
+
+        private static void SetInt(SerializedProperty element, string field, int value) {
+            var p = element.FindPropertyRelative(field);
+            if (p != null) p.intValue = value;
+        }
+
+        #endregion
+
+        #region Editing
+
+        private void ShowAddMenu(VisualElement anchor) {
+            var menu = new GenericMenu();
+            foreach (var type in TypeCache.GetTypesDerivedFrom<TweenBlock>()) {
+                if (type.IsAbstract || type.IsGenericType || type.GetConstructor(Type.EmptyTypes) == null) continue;
+                var blockType = type;
+                menu.AddItem(new GUIContent($"{CategoryOf(type.FullName)}/{NicifyTypeName(type.Name)}"), false, () => AddBlock(blockType));
+            }
+            menu.DropDown(anchor.worldBound);
+        }
+
+        private void AddBlock(Type type) {
+            if (_so == null) return;
+            _so.Update();
+
+            var block = (TweenBlock)Activator.CreateInstance(type);
+            block.startTime = Snap(CursorTime);
+            block.duration = 1f;
+            block.gameObject = _target.gameObject; // sensible default, avoids null targets
+            block.track = _selected >= 0 && _selected < _tweens.arraySize
+                ? _tweens.GetArrayElementAtIndex(_selected).FindPropertyRelative("track")?.intValue ?? 0
+                : 0;
+
+            Undo.IncrementCurrentGroup();
+            Undo.SetCurrentGroupName("Add Timeline Block");
+            var index = _tweens.arraySize;
+            _tweens.InsertArrayElementAtIndex(index);
+            _tweens.GetArrayElementAtIndex(index).managedReferenceValue = block;
+            _so.ApplyModifiedProperties();
+
+            _selected = index;
+            RefreshInfos();
+            SyncView();
+            RebuildDetails();
+            CommitEdit();
+        }
+
+        private void DeleteSelected() {
+            if (_so == null || _selected < 0 || _selected >= _tweens.arraySize) return;
+            var before = _tweens.arraySize;
+            _tweens.DeleteArrayElementAtIndex(_selected);
+            if (_tweens.arraySize == before) _tweens.DeleteArrayElementAtIndex(_selected); // first call only nulls the reference
+            _so.ApplyModifiedProperties();
+
+            _selected = -1;
+            RefreshInfos();
+            SyncView();
+            RebuildDetails();
             CommitEdit();
         }
 
@@ -153,7 +822,10 @@ namespace DoTweenTimeline.Editor {
                 if (HasBlocks()) _target.SkipTo(_cursor, isPlay);
                 return;
             }
-            if (!EnsurePreview()) return;
+            if (!EnsurePreview()) {
+                UpdatePlayhead();
+                return;
+            }
             TimelinePreview.Scrub(_cursor);
             if (isPlay) TimelinePreview.Play();
             else TimelinePreview.Pause();
@@ -170,6 +842,14 @@ namespace DoTweenTimeline.Editor {
             else {
                 TimelinePreview.Stop();
             }
+            UpdateTransport();
+            UpdatePlayhead();
+        }
+
+        private void TogglePlay() {
+            if (IsPlayingNow) Pause();
+            else Play();
+            UpdateTransport();
         }
 
         private bool PreviewActive => TimelinePreview.IsActive && TimelinePreview.Target == _target;
@@ -202,410 +882,33 @@ namespace DoTweenTimeline.Editor {
 
         private void NotifyNoBlocks() => ShowNotification(new GUIContent("Add Tween Blocks to Get Tweenified!"), 1.5f);
 
-        // Called after any serialized change. Component invalidates its own sequence in OnValidate.
-        private void CommitEdit() {
-            if (PreviewActive) TimelinePreview.Rebuild();
-            Repaint();
-        }
-
-        #endregion
-
-        #region OnGUI
-
-        private void OnGUI() {
-            if (!Bind()) {
-                EditorGUILayout.HelpBox("Select a GameObject with a DoTweenTimeline, then open this window from its inspector or Window > DoTween Timeline.", MessageType.Info);
-                return;
-            }
-
-            ComputeLayout();
-            RefreshInfos();
-            HandleInput(Event.current);
-
-            if (Event.current.type == EventType.Repaint) DrawTimeline();
-            DrawToolbar();
-            DrawDetails();
-        }
-
-        private bool Bind() {
-            if (_target == null) {
-                _so = null;
-                _tweens = null;
-                return false;
-            }
-            if (_so == null || _so.targetObject != _target) {
-                _so = new SerializedObject(_target);
-                _tweens = _so.FindProperty("tweens");
-            }
-            if (_tweens == null) return false;
-            _so.Update();
-            return true;
-        }
-
-        private void ComputeLayout() {
-            var hasSelection = _selected >= 0 && _selected < _tweens.arraySize;
-            var detailsH = hasSelection ? DetailsH : 0f;
-            var top = ToolbarH;
-            _rulerRect = new Rect(HeaderW, top, position.width - HeaderW, RulerH);
-            _tracksRect = new Rect(HeaderW, top + RulerH, position.width - HeaderW, Mathf.Max(0f, position.height - top - RulerH - detailsH));
-            _detailsRect = new Rect(0f, position.height - detailsH, position.width, detailsH);
-        }
-
-        private void RefreshInfos() {
-            _infos.Clear();
-            var maxTrack = 0;
-            for (var i = 0; i < _tweens.arraySize; i++) {
-                var element = _tweens.GetArrayElementAtIndex(i);
-                if (element.propertyType != SerializedPropertyType.ManagedReference) continue;
-                var typeName = element.managedReferenceFullTypename;
-                if (string.IsNullOrEmpty(typeName)) continue;
-
-                var nameProp = element.FindPropertyRelative("name");
-                var info = new BlockInfo {
-                    Index = i,
-                    Start = element.FindPropertyRelative("startTime")?.floatValue ?? 0f,
-                    Duration = element.FindPropertyRelative("duration")?.floatValue ?? 0f,
-                    Track = Mathf.Max(0, element.FindPropertyRelative("track")?.intValue ?? 0),
-                    Label = !string.IsNullOrEmpty(nameProp?.stringValue) ? nameProp.stringValue : NicifyTypeName(typeName),
-                    Color = ColorFor(typeName),
-                };
-                maxTrack = Mathf.Max(maxTrack, info.Track);
-                _infos.Add(info);
-            }
-            _trackCount = Mathf.Max(3, maxTrack + 2); // always one empty track to drop blocks on
-        }
-
-        #endregion
-
-        #region Coordinates
-
-        private float TimeToX(float time) => _tracksRect.x + time * _pixelsPerSecond - _scroll;
-        private float XToTime(float x) => (x - _tracksRect.x + _scroll) / _pixelsPerSecond;
-        private float TrackY(int track) => _tracksRect.y + track * TrackH;
-
-        private Rect BlockRect(BlockInfo info) {
-            var x = TimeToX(info.Start);
-            var width = Mathf.Max(4f, info.Duration * _pixelsPerSecond);
-            return new Rect(x, TrackY(info.Track) + 3f, width, TrackH - 6f);
-        }
-
-        private float Snap(float time) => _snapEnabled && _snapStep > 0f ? Mathf.Round(time / _snapStep) * _snapStep : time;
-
-        #endregion
-
-        #region Input
-
-        private void HandleInput(Event e) {
-            var mouse = e.mousePosition;
-
-            switch (e.type) {
-                case EventType.MouseDown when e.button == 0:
-                    if (_rulerRect.Contains(mouse)) {
-                        _drag = Drag.Scrub;
-                        SkipTo(XToTime(mouse.x), false);
-                        e.Use();
-                    }
-                    else if (_tracksRect.Contains(mouse)) {
-                        BeginBlockDrag(mouse);
-                        e.Use();
-                    }
-                    break;
-
-                case EventType.MouseDrag when _drag != Drag.None:
-                    ApplyDrag(mouse);
-                    e.Use();
-                    break;
-
-                case EventType.MouseUp when _drag != Drag.None:
-                    var wasEdit = _drag != Drag.Scrub;
-                    _drag = Drag.None;
-                    if (wasEdit) CommitEdit();
-                    e.Use();
-                    break;
-
-                case EventType.ScrollWheel when _rulerRect.Contains(mouse) || _tracksRect.Contains(mouse):
-                    if (e.control || e.command) {
-                        var timeUnderMouse = XToTime(mouse.x);
-                        _pixelsPerSecond = Mathf.Clamp(_pixelsPerSecond * (1f - e.delta.y * 0.05f), 20f, 600f);
-                        _scroll = Mathf.Max(0f, timeUnderMouse * _pixelsPerSecond - (mouse.x - _tracksRect.x));
-                    }
-                    else {
-                        _scroll = Mathf.Max(0f, _scroll + (e.delta.x + e.delta.y) * 20f);
-                    }
-                    e.Use();
-                    Repaint();
-                    break;
-
-                case EventType.KeyDown when e.keyCode == KeyCode.Delete || e.keyCode == KeyCode.Backspace:
-                    if (_selected >= 0 && !EditorGUIUtility.editingTextField) {
-                        DeleteSelected();
-                        e.Use();
-                    }
-                    break;
-
-                case EventType.KeyDown when e.keyCode == KeyCode.Space && !EditorGUIUtility.editingTextField:
-                    if (IsPlayingNow) Pause(); else Play();
-                    e.Use();
-                    break;
-            }
-        }
-
-        private void BeginBlockDrag(Vector2 mouse) {
-            // Topmost (last drawn) block wins.
-            for (var i = _infos.Count - 1; i >= 0; i--) {
-                var rect = BlockRect(_infos[i]);
-                if (!rect.Contains(mouse)) continue;
-
-                var edge = Mathf.Min(EdgeW, rect.width / 3f);
-                _drag = mouse.x <= rect.x + edge ? Drag.ResizeLeft
-                      : mouse.x >= rect.xMax - edge ? Drag.ResizeRight
-                      : Drag.Move;
-                _dragIndex = _infos[i].Index;
-                _dragMouseX = mouse.x;
-                _dragStart = _infos[i].Start;
-                _dragDuration = _infos[i].Duration;
-                _selected = _dragIndex;
-                Undo.IncrementCurrentGroup();
-                Undo.SetCurrentGroupName("Edit Timeline Block");
-                return;
-            }
-            _selected = -1;
-        }
-
-        private void ApplyDrag(Vector2 mouse) {
-            if (_drag == Drag.Scrub) {
-                SkipTo(XToTime(mouse.x), false);
-                return;
-            }
-            if (_dragIndex < 0 || _dragIndex >= _tweens.arraySize) return;
-
-            var element = _tweens.GetArrayElementAtIndex(_dragIndex);
-            var delta = (mouse.x - _dragMouseX) / _pixelsPerSecond;
-            var end = _dragStart + _dragDuration;
-
-            switch (_drag) {
-                case Drag.Move:
-                    SetFloat(element, "startTime", Mathf.Max(0f, Snap(_dragStart + delta)));
-                    var track = Mathf.Clamp(Mathf.FloorToInt((mouse.y - _tracksRect.y) / TrackH), 0, _trackCount - 1);
-                    SetInt(element, "track", track);
-                    break;
-                case Drag.ResizeRight:
-                    SetFloat(element, "duration", Mathf.Max(MinDuration, Snap(_dragDuration + delta)));
-                    break;
-                case Drag.ResizeLeft:
-                    var newStart = Mathf.Clamp(Snap(_dragStart + delta), 0f, end - MinDuration);
-                    SetFloat(element, "startTime", newStart);
-                    SetFloat(element, "duration", end - newStart);
-                    break;
-            }
-            _so.ApplyModifiedProperties();
-            Repaint();
-        }
-
-        private void DeleteSelected() {
-            if (_selected < 0 || _selected >= _tweens.arraySize) return;
-            var before = _tweens.arraySize;
-            _tweens.DeleteArrayElementAtIndex(_selected);
-            if (_tweens.arraySize == before) _tweens.DeleteArrayElementAtIndex(_selected); // first call only nulls the reference
-            _so.ApplyModifiedProperties();
-            _selected = -1;
-            CommitEdit();
-        }
-
-        private void ShowAddMenu() {
-            var menu = new GenericMenu();
-            foreach (var type in TypeCache.GetTypesDerivedFrom<TweenBlock>()) {
-                if (type.IsAbstract || type.IsGenericType || type.GetConstructor(Type.EmptyTypes) == null) continue;
-                var blockType = type;
-                menu.AddItem(new GUIContent(NicifyTypeName(type.Name)), false, () => AddBlock(blockType));
-            }
-            menu.ShowAsContext();
-        }
-
-        private void AddBlock(Type type) {
-            if (!Bind()) return;
-            var block = (TweenBlock)Activator.CreateInstance(type);
-            block.startTime = Snap(CursorTime);
-            block.duration = 1f;
-            block.gameObject = _target.gameObject; // sensible default, avoids null targets
-            block.track = _selected >= 0 && _selected < _tweens.arraySize
-                ? _tweens.GetArrayElementAtIndex(_selected).FindPropertyRelative("track")?.intValue ?? 0
-                : 0;
-
-            Undo.IncrementCurrentGroup();
-            Undo.SetCurrentGroupName("Add Timeline Block");
-            var index = _tweens.arraySize;
-            _tweens.InsertArrayElementAtIndex(index);
-            _tweens.GetArrayElementAtIndex(index).managedReferenceValue = block;
-            _so.ApplyModifiedProperties();
-            _selected = index;
-            CommitEdit();
-        }
-
-        private static void SetFloat(SerializedProperty element, string field, float value) {
-            var p = element.FindPropertyRelative(field);
-            if (p != null) p.floatValue = value;
-        }
-
-        private static void SetInt(SerializedProperty element, string field, int value) {
-            var p = element.FindPropertyRelative(field);
-            if (p != null) p.intValue = value;
-        }
-
-        #endregion
-
-        #region Drawing
-
-        private static Color Pick(Color dark, Color light) => EditorGUIUtility.isProSkin ? dark : light;
-
-        private void DrawTimeline() {
-            var bg = Pick(new Color(0.16f, 0.16f, 0.16f), new Color(0.78f, 0.78f, 0.78f));
-            var rowA = Pick(new Color(0.19f, 0.19f, 0.19f), new Color(0.82f, 0.82f, 0.82f));
-            var rowB = Pick(new Color(0.21f, 0.21f, 0.21f), new Color(0.85f, 0.85f, 0.85f));
-            var panel = Pick(new Color(0.23f, 0.23f, 0.23f), new Color(0.72f, 0.72f, 0.72f));
-            var grid = Pick(new Color(1f, 1f, 1f, 0.07f), new Color(0f, 0f, 0f, 0.10f));
-            var text = Pick(new Color(0.8f, 0.8f, 0.8f), new Color(0.15f, 0.15f, 0.15f));
-
-            EditorGUI.DrawRect(new Rect(0f, ToolbarH, position.width, position.height - ToolbarH), bg);
-
-            // Track rows
-            for (var t = 0; t < _trackCount; t++) {
-                var y = TrackY(t);
-                if (y >= _tracksRect.yMax) break;
-                EditorGUI.DrawRect(new Rect(_tracksRect.x, y, _tracksRect.width, Mathf.Min(TrackH, _tracksRect.yMax - y)), t % 2 == 0 ? rowA : rowB);
-            }
-
-            // Grid + ruler ticks
-            var step = PickStep();
-            var first = Mathf.Floor(XToTime(_rulerRect.x) / step) * step;
-            _labelStyle ??= new GUIStyle(EditorStyles.miniLabel);
-            _labelStyle.normal.textColor = text;
-            var labelStyle = _labelStyle;
-            for (var time = Mathf.Max(0f, first); TimeToX(time) < _rulerRect.xMax; time += step) {
-                var x = TimeToX(time);
-                if (x < _rulerRect.x) continue;
-                EditorGUI.DrawRect(new Rect(x, _tracksRect.y, 1f, _tracksRect.height), grid);
-            }
-
-            // Blocks
-            _blockLabelStyle ??= new GUIStyle(EditorStyles.miniBoldLabel) { clipping = TextClipping.Clip, alignment = TextAnchor.MiddleLeft, padding = new RectOffset(6, 4, 0, 0) };
-            _blockLabelStyle.normal.textColor = Color.black;
-            foreach (var info in _infos) {
-                var rect = BlockRect(info);
-                if (rect.xMax < _tracksRect.x || rect.x > _tracksRect.xMax || rect.y >= _tracksRect.yMax) continue;
-                DrawBlock(rect, info, info.Index == _selected);
-            }
-
-            // Ruler and headers sit on top so scrolled content never bleeds over them
-            EditorGUI.DrawRect(new Rect(0f, ToolbarH, position.width, RulerH), panel);
-            EditorGUI.DrawRect(new Rect(0f, _tracksRect.y, HeaderW, _tracksRect.height), panel);
-            EditorGUI.DrawRect(new Rect(0f, ToolbarH + RulerH - 1f, position.width, 1f), grid);
-
-            for (var time = Mathf.Max(0f, first); TimeToX(time) < _rulerRect.xMax; time += step) {
-                var x = TimeToX(time);
-                if (x < _rulerRect.x) continue;
-                EditorGUI.DrawRect(new Rect(x, _rulerRect.y + RulerH - 10f, 1f, 10f), text);
-                GUI.Label(new Rect(x + 3f, _rulerRect.y + 2f, 60f, 14f), FormatTime(time), labelStyle);
-            }
-
-            for (var t = 0; t < _trackCount; t++) {
-                var y = TrackY(t);
-                if (y >= _tracksRect.yMax) break;
-                GUI.Label(new Rect(8f, y + 8f, HeaderW - 12f, 18f), $"Track {t + 1}", labelStyle);
-            }
-
-            DrawPlayhead();
-        }
-
-        private void DrawBlock(Rect rect, BlockInfo info, bool selected) {
-            EditorGUI.DrawRect(rect, info.Color);
-            EditorGUI.DrawRect(new Rect(rect.x, rect.y, EdgeW / 2f, rect.height), new Color(0f, 0f, 0f, 0.25f));
-            EditorGUI.DrawRect(new Rect(rect.xMax - EdgeW / 2f, rect.y, EdgeW / 2f, rect.height), new Color(0f, 0f, 0f, 0.25f));
-            if (selected) DrawOutline(rect, Color.white, 2f);
-            GUI.Label(rect, info.Label, _blockLabelStyle);
-
-            var edge = Mathf.Min(EdgeW, rect.width / 3f);
-            EditorGUIUtility.AddCursorRect(new Rect(rect.x, rect.y, edge, rect.height), MouseCursor.ResizeHorizontal);
-            EditorGUIUtility.AddCursorRect(new Rect(rect.xMax - edge, rect.y, edge, rect.height), MouseCursor.ResizeHorizontal);
-        }
-
-        private static void DrawOutline(Rect r, Color c, float w) {
-            EditorGUI.DrawRect(new Rect(r.x, r.y, r.width, w), c);
-            EditorGUI.DrawRect(new Rect(r.x, r.yMax - w, r.width, w), c);
-            EditorGUI.DrawRect(new Rect(r.x, r.y, w, r.height), c);
-            EditorGUI.DrawRect(new Rect(r.xMax - w, r.y, w, r.height), c);
-        }
-
-        private void DrawPlayhead() {
-            var x = TimeToX(CursorTime);
-            if (x < _tracksRect.x || x > _tracksRect.xMax) return;
-            var color = new Color(0.95f, 0.25f, 0.25f);
-            EditorGUI.DrawRect(new Rect(x - 1f, _rulerRect.y, 2f, _rulerRect.height + _tracksRect.height), color);
-            EditorGUI.DrawRect(new Rect(x - 5f, _rulerRect.y, 11f, 7f), color);
-        }
-
-        private float PickStep() {
-            float[] steps = { 0.01f, 0.05f, 0.1f, 0.25f, 0.5f, 1f, 2f, 5f, 10f, 30f, 60f };
-            foreach (var s in steps) {
-                if (s * _pixelsPerSecond >= 70f) return s;
-            }
-            return steps[^1];
-        }
-
-        private static string FormatTime(float t) => t.ToString("0.##") + "s";
-
-        private void DrawToolbar() {
-            GUILayout.BeginArea(new Rect(0f, 0f, position.width, ToolbarH));
-            using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar)) {
-                if (GUILayout.Button(IsPlayingNow ? "Pause" : "Play", EditorStyles.toolbarButton, GUILayout.Width(50f))) {
-                    if (IsPlayingNow) Pause(); else Play();
-                }
-                if (GUILayout.Button("Stop", EditorStyles.toolbarButton, GUILayout.Width(44f))) Stop();
-
-                GUILayout.Space(8f);
-                if (GUILayout.Button("+ Add Block", EditorStyles.toolbarDropDown, GUILayout.Width(90f))) ShowAddMenu();
-                _snapEnabled = GUILayout.Toggle(_snapEnabled, "Snap", EditorStyles.toolbarButton, GUILayout.Width(42f));
-
-                GUILayout.FlexibleSpace();
-
-                var total = 0f;
-                foreach (var info in _infos) total = Mathf.Max(total, info.End);
-                GUILayout.Label($"{_target.name}   {FormatTime(CursorTime)} / {FormatTime(total)}", EditorStyles.miniLabel);
-                GUILayout.Space(8f);
-                _pixelsPerSecond = GUILayout.HorizontalSlider(_pixelsPerSecond, 20f, 600f, GUILayout.Width(90f));
-            }
-            GUILayout.EndArea();
-        }
-
-        private void DrawDetails() {
-            if (_selected < 0 || _selected >= _tweens.arraySize || _detailsRect.height <= 0f) return;
-
-            GUILayout.BeginArea(_detailsRect, EditorStyles.helpBox);
-            _detailsScroll = EditorGUILayout.BeginScrollView(_detailsScroll);
-            EditorGUILayout.LabelField("Block Details", EditorStyles.boldLabel);
-            BlockInspector.Draw(_tweens.GetArrayElementAtIndex(_selected));
-            EditorGUILayout.EndScrollView();
-            GUILayout.EndArea();
-
-            if (_so.ApplyModifiedProperties()) CommitEdit();
-        }
-
         #endregion
 
         #region Helpers
 
+        private static string FormatTime(float t) => t.ToString("0.##") + "s";
+
         private static string NicifyTypeName(string fullOrShortTypeName) {
-            var name = fullOrShortTypeName.Substring(fullOrShortTypeName.LastIndexOfAny(new[] { '.', '/' }) + 1);
+            var typeName = fullOrShortTypeName;
+            var space = typeName.IndexOf(' ');
+            if (space >= 0) typeName = typeName.Substring(space + 1); // drop "Assembly " prefix of managedReferenceFullTypename
+            var name = typeName.Substring(typeName.LastIndexOfAny(new[] { '.', '/' }) + 1);
             name = name.Replace("DoTween", string.Empty).Replace("Block", string.Empty);
-            return string.IsNullOrEmpty(name) ? fullOrShortTypeName : ObjectNames.NicifyVariableName(name);
+            return string.IsNullOrEmpty(name) ? typeName : ObjectNames.NicifyVariableName(name);
         }
 
-        private static Color ColorFor(string typeName) {
-            var hash = 17;
-            foreach (var c in typeName) hash = unchecked(hash * 31 + c);
-            var hue = (Mathf.Abs(hash) % 360) / 360f;
-            return Color.HSVToRGB(hue, 0.45f, 0.78f);
+        // Blocks are grouped by the last namespace segment, e.g. ...Block.Transform -> "Transform".
+        private static string CategoryOf(string fullTypename) {
+            if (string.IsNullOrEmpty(fullTypename)) return "Other";
+            var space = fullTypename.IndexOf(' ');
+            var typeName = space >= 0 ? fullTypename.Substring(space + 1) : fullTypename;
+            var lastDot = typeName.LastIndexOf('.');
+            if (lastDot < 0) return "Other";
+            var ns = typeName.Substring(0, lastDot);
+            return ns.Substring(ns.LastIndexOf('.') + 1);
         }
+
+        private static string CategoryClass(string category) => "tl-cat-" + category.ToLowerInvariant();
 
         #endregion
     }

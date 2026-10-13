@@ -1,0 +1,433 @@
+/* DoTween Timeline - minimalist dark theme.
+   Change the palette below; everything else reads from these variables. */
+
+.tl-root {
+    --bg: #131416;
+    --surface: #1a1b1e;
+    --surface-raised: #212226;
+    --lane-a: #17181b;
+    --lane-b: #1b1c20;
+    --border: #2b2d32;
+    --border-soft: #232529;
+    --text: #d7d9de;
+    --text-muted: #80848c;
+    --accent: #6c9cff;
+    --accent-soft: #28344f;
+    --playhead: #ff6b6b;
+    --cat-transform: #7b9ac9;
+    --cat-ui: #7fb5a0;
+    --cat-other: #9a9ea6;
+
+    flex-grow: 1;
+    background-color: var(--bg);
+    color: var(--text);
+}
+
+/* ---------- Empty state ---------- */
+
+.tl-empty {
+    flex-grow: 1;
+    -unity-text-align: middle-center;
+    white-space: normal;
+    padding: 32px;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+/* ---------- Toolbar ---------- */
+
+.tl-toolbar {
+    flex-direction: row;
+    align-items: center;
+    height: 38px;
+    flex-shrink: 0;
+    padding-left: 10px;
+    padding-right: 12px;
+    background-color: var(--surface);
+    border-bottom-width: 1px;
+    border-bottom-color: var(--border);
+}
+
+.tl-spacer {
+    flex-grow: 1;
+}
+
+.tl-time {
+    margin-right: 14px;
+    font-size: 11px;
+    color: var(--text-muted);
+    -unity-font-style: normal;
+}
+
+.tl-root .tl-btn {
+    height: 24px;
+    margin: 0 6px 0 0;
+    padding: 0 12px;
+    font-size: 11px;
+    color: var(--text);
+    background-color: var(--surface-raised);
+    border-width: 1px;
+    border-color: var(--border);
+    border-radius: 5px;
+    transition-property: background-color, border-color;
+    transition-duration: 0.12s;
+}
+
+.tl-root .tl-btn:hover {
+    background-color: #2a2c31;
+    border-color: #3a3d44;
+}
+
+.tl-root .tl-btn:active {
+    background-color: var(--accent-soft);
+    border-color: var(--accent);
+}
+
+.tl-root .tl-btn--primary {
+    min-width: 54px;
+    color: #0f1012;
+    background-color: var(--accent);
+    border-color: var(--accent);
+    -unity-font-style: bold;
+}
+
+.tl-root .tl-btn--primary:hover {
+    background-color: #86adff;
+    border-color: #86adff;
+}
+
+.tl-root .tl-btn--primary:active {
+    background-color: #5585e6;
+}
+
+.tl-root .tl-btn--active {
+    background-color: var(--playhead);
+    border-color: var(--playhead);
+}
+
+.tl-root .tl-btn--active:hover {
+    background-color: #ff8585;
+    border-color: #ff8585;
+}
+
+.tl-toggle {
+    margin: 0 8px 0 4px;
+    font-size: 11px;
+}
+
+.tl-root .tl-toggle .unity-base-field__label {
+    min-width: 0;
+    margin-right: 6px;
+}
+
+.tl-zoom {
+    width: 96px;
+    margin: 0;
+}
+
+/* ---------- Ruler ---------- */
+
+.tl-main {
+    flex-grow: 1;
+    flex-shrink: 1;
+}
+
+.tl-ruler-row {
+    flex-direction: row;
+    flex-shrink: 0;
+    background-color: var(--surface);
+    border-bottom-width: 1px;
+    border-bottom-color: var(--border);
+}
+
+.tl-corner {
+    flex-shrink: 0;
+    border-right-width: 1px;
+    border-right-color: var(--border);
+}
+
+.tl-ruler {
+    flex-grow: 1;
+    overflow: hidden;
+}
+
+.tl-tick {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background-color: var(--border);
+}
+
+.tl-tick__label {
+    position: absolute;
+    left: 5px;
+    top: 5px;
+    font-size: 10px;
+    color: var(--text-muted);
+}
+
+/* ---------- Tracks ---------- */
+
+.tl-scroll {
+    flex-grow: 1;
+}
+
+.tl-root .tl-scroll .unity-scroller--vertical {
+    width: 8px;
+    background-color: transparent;
+}
+
+.tl-root .tl-scroll .unity-base-slider__tracker {
+    background-color: transparent;
+    border-width: 0;
+}
+
+.tl-root .tl-scroll .unity-base-slider__dragger {
+    background-color: #34363c;
+    border-width: 0;
+    border-radius: 4px;
+}
+
+.tl-root .tl-scroll .unity-scroller__low-button,
+.tl-root .tl-scroll .unity-scroller__high-button {
+    display: none;
+}
+
+.tl-track-area {
+    flex-direction: row;
+}
+
+.tl-headers {
+    flex-shrink: 0;
+    background-color: var(--surface);
+    border-right-width: 1px;
+    border-right-color: var(--border);
+}
+
+.tl-header {
+    -unity-text-align: middle-left;
+    padding-left: 12px;
+    font-size: 11px;
+    color: var(--text-muted);
+    border-bottom-width: 1px;
+    border-bottom-color: var(--border-soft);
+}
+
+.tl-lanes {
+    flex-grow: 1;
+    overflow: hidden;
+}
+
+.tl-layer {
+    position: absolute;
+    left: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+}
+
+.tl-lane {
+    background-color: var(--lane-a);
+    border-bottom-width: 1px;
+    border-bottom-color: var(--border-soft);
+}
+
+.tl-lane--alt {
+    background-color: var(--lane-b);
+}
+
+.tl-grid-line {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background-color: #ffffff;
+    opacity: 0.04;
+}
+
+/* ---------- Blocks ---------- */
+
+.tl-block {
+    position: absolute;
+    overflow: hidden;
+    background-color: var(--cat-other);
+    border-radius: 5px;
+    border-width: 1px;
+    border-color: rgba(255, 255, 255, 0.10);
+    transition-property: border-color, background-color;
+    transition-duration: 0.1s;
+}
+
+.tl-cat-transform {
+    background-color: var(--cat-transform);
+}
+
+.tl-cat-ui {
+    background-color: var(--cat-ui);
+}
+
+.tl-block:hover {
+    border-color: rgba(255, 255, 255, 0.35);
+}
+
+.tl-block--selected {
+    border-width: 2px;
+    border-color: var(--accent);
+}
+
+.tl-block__label {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    padding-left: 9px;
+    padding-right: 9px;
+    -unity-text-align: middle-left;
+    -unity-font-style: bold;
+    font-size: 11px;
+    color: #0f1012;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tl-handle {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 7px;
+    cursor: resize-horizontal;
+    background-color: rgba(0, 0, 0, 0);
+}
+
+.tl-handle:hover {
+    background-color: rgba(0, 0, 0, 0.28);
+}
+
+.tl-handle--left {
+    left: 0;
+}
+
+.tl-handle--right {
+    right: 0;
+}
+
+/* ---------- Playhead ---------- */
+
+.tl-playhead {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background-color: var(--playhead);
+}
+
+.tl-playhead__head {
+    position: absolute;
+    top: 0;
+    left: -5px;
+    width: 12px;
+    height: 9px;
+    background-color: var(--playhead);
+    border-bottom-left-radius: 6px;
+    border-bottom-right-radius: 6px;
+}
+
+/* ---------- Details panel ---------- */
+
+.tl-details {
+    flex-shrink: 0;
+    max-height: 250px;
+    background-color: var(--surface);
+    border-top-width: 1px;
+    border-top-color: var(--border);
+}
+
+.tl-details__header {
+    flex-direction: row;
+    align-items: center;
+    height: 28px;
+    padding-left: 12px;
+    padding-right: 12px;
+    border-bottom-width: 1px;
+    border-bottom-color: var(--border-soft);
+}
+
+.tl-details__title {
+    -unity-font-style: bold;
+    font-size: 11px;
+    color: var(--text);
+}
+
+.tl-details__hint {
+    margin-left: 8px;
+    font-size: 10px;
+    color: var(--text-muted);
+}
+
+.tl-details__body {
+    padding: 8px 12px 10px 12px;
+}
+
+/* ---------- Fields (PropertyField output inside the window) ---------- */
+
+.tl-root .unity-base-field {
+    margin: 2px 0;
+}
+
+.tl-root .unity-base-field__label {
+    min-width: 120px;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.tl-root .unity-base-field__input,
+.tl-root .unity-base-text-field__input {
+    background-color: var(--surface-raised);
+    color: var(--text);
+    border-width: 1px;
+    border-color: var(--border);
+    border-radius: 4px;
+}
+
+.tl-root .unity-base-field__input:hover {
+    border-color: #3a3d44;
+}
+
+.tl-root .unity-base-field:focus .unity-base-field__input,
+.tl-root .unity-base-text-field__input:focus {
+    border-color: var(--accent);
+}
+
+.tl-root .unity-base-popup-field__arrow,
+.tl-root .unity-object-field__selector {
+    opacity: 0.6;
+}
+
+.tl-root .unity-toggle__checkmark {
+    background-color: var(--surface-raised);
+    border-width: 1px;
+    border-color: var(--border);
+    border-radius: 3px;
+}
+
+.tl-root .unity-toggle__input:checked > .unity-toggle__checkmark {
+    background-color: var(--accent);
+    border-color: var(--accent);
+}
+
+.tl-root .unity-foldout__toggle .unity-toggle__text {
+    color: var(--text-muted);
+}
+
+.tl-root .unity-slider .unity-base-slider__tracker {
+    background-color: var(--border);
+    border-radius: 2px;
+}
+
+.tl-root .unity-slider .unity-base-slider__dragger {
+    background-color: var(--accent);
+    border-width: 0;
+}
